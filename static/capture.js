@@ -12,7 +12,8 @@
  * Nothing is recognised here beyond that check: the reading itself is done by the module, in Python.
  */
 (() => {
-    const TICK_MS = 250;
+    // Short, so a send goes out as soon as the last one is answered and the module's every_ms allows.
+    const TICK_MS = 100;
     // While no module's screen is showing, look only this often: opening a box is noticed within half a second.
     const IDLE_CHECK_MS = 500;
     const SPEC_RETRY_MS = 30000;
