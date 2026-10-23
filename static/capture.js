@@ -13,12 +13,13 @@
  */
 (() => {
     const TICK_MS = 250;
+    // While no module's screen is showing, look only this often: opening a box is noticed within half a second.
+    const IDLE_CHECK_MS = 500;
     const SPEC_RETRY_MS = 30000;
 
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
-    const frameCanvas = document.createElement('canvas');
     const smallCanvas = document.createElement('canvas');
 
     let stream = null;
@@ -27,6 +28,7 @@
     // or the canvas cannot be read back.
     const replayUrl = new URLSearchParams(location.search).get('replay');
     let replay = null;
+    let lastCheck = 0;
     const modules = [];          // {name, url, spec, error, nextTry, screens: {id: status}}
 
     const $ = sel => document.querySelector(sel);
@@ -136,15 +138,16 @@
         return [X, Y, Math.min(w - X, Math.round(rw * sx)), Math.min(h - Y, Math.round(rh * sy))];
     }
 
-    /** Is this screen showing? Shrink the detect region, grey it the way OpenCV does, correlate with the spec. */
-    function showing(sc, w, h) {
+    /** Is this screen showing? Shrink the detect region, grey it the way OpenCV does, correlate with the spec.
+     *  Only that small patch is copied out of the frame, so watching costs the gaming PC next to nothing. */
+    function showing(source, sc, w, h) {
         const [x, y, rw, rh] = scaleRegion(sc.detect.region, sc, w, h);
         const [sw, sh] = sc.detect.size;
         smallCanvas.width = sw;
         smallCanvas.height = sh;
         const ctx = smallCanvas.getContext('2d', { willReadFrequently: true });
         ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(frameCanvas, x, y, rw, rh, 0, 0, sw, sh);
+        ctx.drawImage(source, x, y, rw, rh, 0, 0, sw, sh);
         const px = ctx.getImageData(0, 0, sw, sh).data;
         const ref = sc.detect.pixels;
         const n = sw * sh;
@@ -164,12 +167,12 @@
         return da && db ? num / Math.sqrt(da * db) >= sc.detect.min_match : false;
     }
 
-    async function send(m, sc, status, w, h) {
+    async function send(source, m, sc, w, h) {
         const [x, y, rw, rh] = scaleRegion(sc.send.region, sc, w, h);
         const crop = document.createElement('canvas');
         crop.width = rw;
         crop.height = rh;
-        crop.getContext('2d').drawImage(frameCanvas, x, y, rw, rh, 0, 0, rw, rh);
+        crop.getContext('2d').drawImage(source, x, y, rw, rh, 0, 0, rw, rh);
         const blob = await new Promise(r => crop.toBlob(r, 'image/jpeg', sc.send.quality ?? 0.9));
         const form = new FormData();
         form.append('file', blob, `${sc.id}.jpg`);
@@ -187,20 +190,20 @@
         const w = stream ? video.videoWidth : replay?.naturalWidth;
         const h = stream ? video.videoHeight : replay?.naturalHeight;
         if (!source || !w) return;
-        frameCanvas.width = w;
-        frameCanvas.height = h;
-        frameCanvas.getContext('2d').drawImage(source, 0, 0, w, h);
         const now = Date.now();
+        const anyShowing = modules.some(m => Object.values(m.screens).some(st => st.showing));
+        if (!anyShowing && now - lastCheck < IDLE_CHECK_MS) return;
+        lastCheck = now;
         for (const m of modules) {
             if (!m.spec) continue;
             for (const sc of m.spec.screens) {
                 const st = m.screens[sc.id];
-                st.showing = showing(sc, w, h);
+                st.showing = showing(source, sc, w, h);
                 // One upload at a time per screen: a slow module gets fewer frames, never a queue of stale ones.
                 if (!st.showing || st.busy || now - st.last < sc.every_ms) continue;
                 st.busy = true;
                 st.last = now;
-                send(m, sc, st, w, h)
+                send(source, m, sc, w, h)
                     .then(summary => { st.summary = summary; st.error = null; st.sent++; })
                     .catch(e => { st.error = e.message; })
                     .finally(() => { st.busy = false; });
