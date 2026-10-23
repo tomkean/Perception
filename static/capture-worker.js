@@ -22,9 +22,9 @@ const IDLE_CHECK_MS = 500;
 const SPEC_RETRY_MS = 30000;
 const STATUS_MS = 500;
 // Pictures on their way to one module at once. Most of a picture's round trip is cutting, encoding and sending it,
-// so with two on the way they follow each other twice as closely. Never more: a slow module still gets fewer
+// so with several on the way they follow each other that much more closely. Never more: a slow module still gets fewer
 // pictures, not a queue of stale ones.
-const MAX_IN_FLIGHT = 2;
+const MAX_IN_FLIGHT = 3;
 
 let reader = null;
 let modules = [];          // {name, url, spec, error, nextTry, screens: {id: status}}
