@@ -14,16 +14,19 @@ extension, is something it could single out.
 """
 import json
 import os
+import time
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 HERE = Path(__file__).resolve().parent
 PORT = int(os.environ.get("PERCEPTION_PORT", 8300))
 MODULES_FILE = Path(os.environ.get("PERCEPTION_MODULES", HERE / "modules.json"))
+# Whole-screen snapshots, taken from the page to teach a module a new screen.
+SNAPSHOT_DIR = Path(os.environ.get("PERCEPTION_SNAPSHOTS", HERE / "snapshots"))
 
 app = FastAPI(title="Perception")
 
@@ -36,6 +39,14 @@ async def modules():
         return json.loads(MODULES_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
+
+
+@app.post("/api/snapshot")
+async def snapshot(file: UploadFile = File(...)):
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    name = time.strftime("snap_%Y%m%d_%H%M%S.jpg")
+    (SNAPSHOT_DIR / name).write_bytes(await file.read())
+    return {"saved": name}
 
 
 @app.get("/")

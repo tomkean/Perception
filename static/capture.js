@@ -212,6 +212,29 @@
         }
     }
 
+    /** Save the whole current screen on the Pi. */
+    async function snapshot() {
+        const source = stream ? video : replay;
+        const w = stream ? video.videoWidth : replay?.naturalWidth;
+        const h = stream ? video.videoHeight : replay?.naturalHeight;
+        if (!source || !w) { setLinkStatus('Link the screen first', 'bad'); return; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(source, 0, 0, w, h);
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.95));
+        const form = new FormData();
+        form.append('file', blob, 'snapshot.jpg');
+        try {
+            const res = await fetch('/api/snapshot', { method: 'POST', body: form });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            $('#snap').textContent = `Saved ${(await res.json()).saved}`;
+        } catch (e) {
+            $('#snap').textContent = `Snapshot failed: ${e.message}`;
+        }
+        setTimeout(() => { $('#snap').textContent = 'Snapshot'; }, 4000);
+    }
+
     // ------------------------------------------------------------------ status
 
     function render() {
@@ -234,6 +257,7 @@
     // ------------------------------------------------------------------ start
 
     $('#link').addEventListener('click', () => (stream ? unlink() : link()));
+    $('#snap').addEventListener('click', snapshot);
     if (replayUrl) {
         const img = new Image();
         img.onload = () => { replay = img; setLinkStatus(`Replaying ${replayUrl}`, 'warn'); };
