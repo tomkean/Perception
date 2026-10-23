@@ -1,37 +1,22 @@
 /**
  * capture.js
- * Shares the game screen and sends each module the part it asked for, while that screen is showing.
+ * Shares the game screen and hands it to capture-worker.js, which sends each module the part it asked for while
+ * that screen is showing. This page only links the screen and shows how each module is doing: Chrome holds back
+ * a page it thinks is hidden, as this one is under the game, so nothing that has to keep pace runs here.
  *
- * The page knows nothing about any game screen. Each module's spec says, per screen it wants:
- *   detect: a small region, shrunk to `size` and compared against `pixels` (grey, 0-255) -- a match at or above
- *           `min_match` means the screen is showing
- *   send:   the region to crop and post, as JPEG at `quality`
- *   post:   where to post it, on the module; every_ms: how often at most
- * Regions are in `ref_width` x `ref_height` pixels and scaled to the captured size.
- *
- * Nothing is recognised here beyond that check: the reading itself is done by the module, in Python.
+ * Nothing is recognised beyond the worker's few-pixel check: the reading itself is done by the module, in Python.
  */
 (() => {
-    // Short, so a send goes out as soon as the last one is answered and the module's every_ms allows.
-    const TICK_MS = 100;
-    // While no module's screen is showing, look only this often: opening a box is noticed within half a second.
-    const IDLE_CHECK_MS = 500;
-    const SPEC_RETRY_MS = 30000;
-
-    const video = document.createElement('video');
-    video.muted = true;
-    video.playsInline = true;
-    const smallCanvas = document.createElement('canvas');
-
     let stream = null;
     let audio = null;
     // ?replay=<image url>: use a saved capture as the screen, for testing without the game. Same origin only,
-    // or the canvas cannot be read back.
+    // or the canvas cannot be read back. It goes through the worker exactly as a shared screen does.
     const replayUrl = new URLSearchParams(location.search).get('replay');
-    let replay = null;
-    let lastCheck = 0;
-    const modules = [];          // {name, url, spec, error, nextTry, screens: {id: status}}
+    let moduleList = [];
+    let status = null;           // the worker's latest report
+    let snapshotPending = false;
 
+    const worker = new Worker('/static/capture-worker.js');
     const $ = sel => document.querySelector(sel);
 
     // ------------------------------------------------------------------ linking the screen
@@ -44,35 +29,44 @@
         try {
             stream = await navigator.mediaDevices.getDisplayMedia({
                 // The pointer left out of the picture where Chrome honours it, so it cannot sit over what is read.
-                video: { displaySurface: 'monitor', cursor: 'never', frameRate: { ideal: 5, max: 10 } },
+                video: { displaySurface: 'monitor', cursor: 'never', frameRate: { ideal: 10, max: 15 } },
                 audio: false,
             });
         } catch (e) {
             setLinkStatus(e.name === 'NotAllowedError' ? 'Not linked' : `Could not link: ${e.message}`, 'bad');
             return;
         }
-        video.srcObject = stream;
-        await video.play().catch(() => {});
         keepAwake();
-        stream.getVideoTracks()[0].onended = unlink;
-        const label = stream.getVideoTracks()[0].label;
-        setLinkStatus(`Linked${label ? `: ${label}` : ''}`, 'good');
+        const track = stream.getVideoTracks()[0];
+        track.onended = unlink;
+        startWorker(track);
+        setLinkStatus(`Linked${track.label ? `: ${track.label}` : ''}`, 'good');
         $('#link').textContent = 'Unlink';
     }
 
     function unlink() {
+        worker.postMessage({ type: 'stop' });
         stream?.getTracks().forEach(t => t.stop());
         stream = null;
-        video.srcObject = null;
+        status = null;
         audio?.close().catch(() => {});
         audio = null;
         setLinkStatus('Not linked', 'muted');
         $('#link').textContent = 'Link screen';
     }
 
-    /** Chrome can freeze a page it thinks is hidden -- which is this one, under a fullscreen game -- but not one
-     *  playing sound, so play an inaudible tone (Livestock's fix). It does not stop timers being held to once a
-     *  second; everyMs() deals with that. */
+    /** Hand the track's frames to the worker. */
+    function startWorker(track) {
+        if (!window.MediaStreamTrackProcessor) {
+            setLinkStatus('This browser cannot pass the screen to a worker; use Chrome', 'bad');
+            return;
+        }
+        const { readable } = new MediaStreamTrackProcessor({ track });
+        worker.postMessage({ type: 'start', readable, modules: moduleList }, [readable]);
+    }
+
+    /** Chrome can freeze a page it thinks is hidden, but not one playing sound, so play an inaudible tone
+     *  (Livestock's fix). It keeps this page answering the worker; the worker keeps the pace. */
     function keepAwake() {
         try {
             audio = new (window.AudioContext || window.webkitAudioContext)();
@@ -101,132 +95,39 @@
         el.className = cls;
     }
 
-    // ------------------------------------------------------------------ module specs
-
-    async function loadModules() {
-        try {
-            const list = await (await fetch('/api/modules')).json();
-            for (const m of list) modules.push({ ...m, spec: null, error: null, nextTry: 0, screens: {} });
-        } catch (e) {
-            $('#modules').innerHTML = `<p class="bad">Could not load the module list: ${e.message}</p>`;
-        }
+    /** A saved capture played as a 10 fps screen. */
+    function startReplay(url) {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            // A canvas stream only carries a frame when the canvas is drawn on, so keep drawing.
+            setInterval(() => ctx.drawImage(img, 0, 0), 100);
+            ctx.drawImage(img, 0, 0);
+            startWorker(canvas.captureStream(10).getVideoTracks()[0]);
+            setLinkStatus(`Replaying ${url}`, 'warn');
+        };
+        img.src = url;
     }
 
-    async function refreshSpecs() {
-        const now = Date.now();
-        for (const m of modules) {
-            if (m.spec || now < m.nextTry) continue;
-            m.nextTry = now + SPEC_RETRY_MS;
-            try {
-                const res = await fetch(`${m.url}/api/perception/spec`);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                m.spec = await res.json();
-                m.error = null;
-                for (const sc of m.spec.screens) {
-                    m.screens[sc.id] = { showing: false, last: 0, busy: false, summary: '', error: null, sent: 0 };
-                }
-            } catch (e) {
-                m.error = `not reachable (${e.message}); retrying`;
-            }
-        }
-    }
-
-    // ------------------------------------------------------------------ each frame
-
-    function scaleRegion(region, sc, w, h) {
-        const sx = w / sc.ref_width, sy = h / sc.ref_height;
-        const [x, y, rw, rh] = region;
-        const X = Math.max(0, Math.round(x * sx)), Y = Math.max(0, Math.round(y * sy));
-        return [X, Y, Math.min(w - X, Math.round(rw * sx)), Math.min(h - Y, Math.round(rh * sy))];
-    }
-
-    /** Is this screen showing? Shrink the detect region, grey it the way OpenCV does, correlate with the spec.
-     *  Only that small patch is copied out of the frame, so watching costs the gaming PC next to nothing. */
-    function showing(source, sc, w, h) {
-        const [x, y, rw, rh] = scaleRegion(sc.detect.region, sc, w, h);
-        const [sw, sh] = sc.detect.size;
-        smallCanvas.width = sw;
-        smallCanvas.height = sh;
-        const ctx = smallCanvas.getContext('2d', { willReadFrequently: true });
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(source, x, y, rw, rh, 0, 0, sw, sh);
-        const px = ctx.getImageData(0, 0, sw, sh).data;
-        const ref = sc.detect.pixels;
-        const n = sw * sh;
-        const a = new Float32Array(n);
-        let ma = 0, mb = 0;
-        for (let i = 0; i < n; i++) {
-            a[i] = 0.299 * px[4 * i] + 0.587 * px[4 * i + 1] + 0.114 * px[4 * i + 2];
-            ma += a[i];
-            mb += ref[i];
-        }
-        ma /= n; mb /= n;
-        let num = 0, da = 0, db = 0;
-        for (let i = 0; i < n; i++) {
-            const u = a[i] - ma, v = ref[i] - mb;
-            num += u * v; da += u * u; db += v * v;
-        }
-        return da && db ? num / Math.sqrt(da * db) >= sc.detect.min_match : false;
-    }
-
-    async function send(source, m, sc, w, h) {
-        const [x, y, rw, rh] = scaleRegion(sc.send.region, sc, w, h);
-        const crop = document.createElement('canvas');
-        crop.width = rw;
-        crop.height = rh;
-        crop.getContext('2d').drawImage(source, x, y, rw, rh, 0, 0, rw, rh);
-        const blob = await new Promise(r => crop.toBlob(r, 'image/jpeg', sc.send.quality ?? 0.9));
-        const form = new FormData();
-        form.append('file', blob, `${sc.id}.jpg`);
-        form.append('screen', sc.id);
-        form.append('capture_w', w);
-        form.append('capture_h', h);
-        form.append('x', x); form.append('y', y); form.append('w', rw); form.append('h', rh);
-        const res = await fetch(`${m.url}${sc.post}`, { method: 'POST', body: form });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return (await res.json()).summary ?? '';
-    }
-
-    function tick() {
-        const source = stream ? video : replay;
-        const w = stream ? video.videoWidth : replay?.naturalWidth;
-        const h = stream ? video.videoHeight : replay?.naturalHeight;
-        if (!source || !w) return;
-        const now = Date.now();
-        const anyShowing = modules.some(m => Object.values(m.screens).some(st => st.showing));
-        if (!anyShowing && now - lastCheck < IDLE_CHECK_MS) return;
-        lastCheck = now;
-        for (const m of modules) {
-            if (!m.spec) continue;
-            for (const sc of m.spec.screens) {
-                const st = m.screens[sc.id];
-                st.showing = showing(source, sc, w, h);
-                // One upload at a time per screen: a slow module gets fewer frames, never a queue of stale ones.
-                if (!st.showing || st.busy || now - st.last < sc.every_ms) continue;
-                st.busy = true;
-                st.last = now;
-                send(source, m, sc, w, h)
-                    .then(summary => { st.summary = summary; st.error = null; st.sent++; })
-                    .catch(e => { st.error = e.message; })
-                    .finally(() => { st.busy = false; });
-            }
-        }
-    }
+    // ------------------------------------------------------------------ snapshot
 
     /** Save the whole current screen on the Pi. */
-    async function snapshot() {
-        const source = stream ? video : replay;
-        const w = stream ? video.videoWidth : replay?.naturalWidth;
-        const h = stream ? video.videoHeight : replay?.naturalHeight;
-        if (!source || !w) { setLinkStatus('Link the screen first', 'bad'); return; }
-        const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        canvas.getContext('2d').drawImage(source, 0, 0, w, h);
-        const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.95));
-        const form = new FormData();
-        form.append('file', blob, 'snapshot.jpg');
+    function snapshot() {
+        if (!stream && !replayUrl) { setLinkStatus('Link the screen first', 'bad'); return; }
+        snapshotPending = true;
+        worker.postMessage({ type: 'snapshot' });
+    }
+
+    async function saveSnapshot(msg) {
+        if (!snapshotPending) return;
+        snapshotPending = false;
         try {
+            if (msg.error) throw new Error(msg.error);
+            const form = new FormData();
+            form.append('file', msg.blob, 'snapshot.jpg');
             const res = await fetch('/api/snapshot', { method: 'POST', body: form });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             $('#snap').textContent = `Saved ${(await res.json()).saved}`;
@@ -240,47 +141,37 @@
 
     function render() {
         const el = $('#modules');
-        if (!modules.length) return;
-        el.innerHTML = modules.map(m => {
-            const head = `<div class="module-name">${m.spec?.module ?? m.name} <span class="muted small mono">${m.url}</span></div>`;
-            if (!m.spec) return `<div class="module">${head}<div class="bad small">${m.error ?? 'connecting…'}</div></div>`;
-            const rows = m.spec.screens.map(sc => {
-                const st = m.screens[sc.id];
-                const state = !stream && !replay ? '<span class="muted">screen not linked</span>'
-                    : st.showing ? '<span class="good">showing</span>' : '<span class="muted">not on screen</span>';
+        if (!moduleList.length) return;
+        const reported = status ?? moduleList.map(m => ({ ...m, screens: [] }));
+        el.innerHTML = reported.map(m => {
+            const head = `<div class="module-name">${m.module ?? m.name} <span class="muted small mono">${m.url}</span></div>`;
+            if (!status) return `<div class="module">${head}<div class="muted small">screen not linked</div></div>`;
+            if (!m.module) return `<div class="module">${head}<div class="bad small">${m.error ?? 'connecting…'}</div></div>`;
+            const rows = m.screens.map(st => {
+                const state = st.showing ? '<span class="good">showing</span>' : '<span class="muted">not on screen</span>';
                 const result = st.error ? `<span class="bad">${st.error}</span>` : (st.summary || '');
-                return `<div>${sc.label ?? sc.id}</div><div>${state} · ${st.sent} sent${result ? ' · ' + result : ''}</div>`;
+                return `<div>${st.label}</div><div>${state} · ${st.sent} sent${result ? ' · ' + result : ''}</div>`;
             }).join('');
             return `<div class="module">${head}<div class="screen">${rows}</div></div>`;
         }).join('');
     }
 
-    /** Run `fn` every `ms`, even while this tab is hidden behind the game. Chrome holds timers in a hidden tab to
-     *  once a second, but not timers in a worker; so a worker keeps the time and wakes the page, whose message
-     *  handling is not held back. Falls back to a plain timer if workers are unavailable. */
-    function everyMs(fn, ms) {
-        try {
-            const src = `setInterval(() => postMessage(0), ${ms});`;
-            const worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
-            worker.onmessage = fn;
-        } catch (e) {
-            console.warn('[capture] worker timer unavailable, using a plain timer', e);
-            setInterval(fn, ms);
-        }
-    }
+    worker.onmessage = e => {
+        if (e.data.type === 'status') { status = e.data.modules; render(); }
+        else if (e.data.type === 'snapshot') saveSnapshot(e.data);
+    };
 
     // ------------------------------------------------------------------ start
 
     $('#link').addEventListener('click', () => (stream ? unlink() : link()));
     $('#snap').addEventListener('click', snapshot);
-    if (replayUrl) {
-        const img = new Image();
-        img.onload = () => { replay = img; setLinkStatus(`Replaying ${replayUrl}`, 'warn'); };
-        img.src = replayUrl;
-    }
     if (!navigator.mediaDevices?.getDisplayMedia) showSetup();
-    loadModules().then(refreshSpecs);
-    everyMs(tick, TICK_MS);
-    setInterval(refreshSpecs, 5000);
-    setInterval(render, 500);
+    fetch('/api/modules')
+        .then(r => r.json())
+        .then(list => {
+            moduleList = list;
+            render();
+            if (replayUrl) startReplay(replayUrl);
+        })
+        .catch(e => { $('#modules').innerHTML = `<p class="bad">Could not load the module list: ${e.message}</p>`; });
 })();
