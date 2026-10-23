@@ -9,7 +9,7 @@ DEST=/home/tom/Perception
 
 ssh "$PI" "mkdir -p $DEST/static"
 scp -q server.py requirements.txt perception.service "$PI:$DEST/"
-scp -q static/* "$PI:$DEST/static/"
+scp -q static/index.html static/capture.js static/capture.css "$PI:$DEST/static/"
 ssh "$PI" "[ -f $DEST/modules.json ]" || scp -q modules.json "$PI:$DEST/"
 
 ssh "$PI" "
