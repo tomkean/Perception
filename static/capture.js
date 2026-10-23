@@ -70,8 +70,9 @@
         $('#link').textContent = 'Link screen';
     }
 
-    /** Chrome slows timers right down in a page it thinks is hidden -- which is this one, under a fullscreen game.
-     *  A page playing sound is exempt, so play an inaudible tone (Livestock's fix). */
+    /** Chrome can freeze a page it thinks is hidden -- which is this one, under a fullscreen game -- but not one
+     *  playing sound, so play an inaudible tone (Livestock's fix). It does not stop timers being held to once a
+     *  second; everyMs() deals with that. */
     function keepAwake() {
         try {
             audio = new (window.AudioContext || window.webkitAudioContext)();
@@ -254,6 +255,20 @@
         }).join('');
     }
 
+    /** Run `fn` every `ms`, even while this tab is hidden behind the game. Chrome holds timers in a hidden tab to
+     *  once a second, but not timers in a worker; so a worker keeps the time and wakes the page, whose message
+     *  handling is not held back. Falls back to a plain timer if workers are unavailable. */
+    function everyMs(fn, ms) {
+        try {
+            const src = `setInterval(() => postMessage(0), ${ms});`;
+            const worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+            worker.onmessage = fn;
+        } catch (e) {
+            console.warn('[capture] worker timer unavailable, using a plain timer', e);
+            setInterval(fn, ms);
+        }
+    }
+
     // ------------------------------------------------------------------ start
 
     $('#link').addEventListener('click', () => (stream ? unlink() : link()));
@@ -265,7 +280,7 @@
     }
     if (!navigator.mediaDevices?.getDisplayMedia) showSetup();
     loadModules().then(refreshSpecs);
-    setInterval(tick, TICK_MS);
+    everyMs(tick, TICK_MS);
     setInterval(refreshSpecs, 5000);
     setInterval(render, 500);
 })();
