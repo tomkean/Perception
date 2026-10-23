@@ -1,0 +1,12 @@
+[Unit]
+Description=Perception - shared screen capture page for the Rust tools
+After=network-online.target
+
+[Service]
+User=tom
+WorkingDirectory=/home/tom/Perception
+ExecStart=/home/tom/Perception/venv/bin/python /home/tom/Perception/server.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

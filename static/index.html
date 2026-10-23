@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Perception</title>
+    <link rel="stylesheet" href="/static/capture.css">
+</head>
+<body>
+    <header>
+        <h1>PERCEPTION</h1>
+        <button id="link">Link screen</button>
+        <span id="link-status" class="muted">Not linked</span>
+    </header>
+    <main>
+        <p id="setup" class="warn hidden"></p>
+        <section>
+            <h2>Modules</h2>
+            <div id="modules"><p class="muted">Loading…</p></div>
+        </section>
+        <p class="muted small">
+            Leave this tab open and go back to the game. Only the parts of the screen a module asks for are sent,
+            and only while that screen is showing.
+        </p>
+    </main>
+    <script src="/static/capture.js"></script>
+</body>
+</html>

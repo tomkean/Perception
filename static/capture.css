@@ -1,0 +1,29 @@
+:root {
+    --bg: #15171a;
+    --panel: #1f2226;
+    --border: #2e3238;
+    --text: #e3e3e3;
+    --muted: #8a9099;
+    --good: #6cc04a;
+    --warn: #f2b632;
+    --bad: #ec5a4f;
+    --accent: #ce422b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 2px solid var(--accent); }
+h1 { margin: 0; font-size: 20px; letter-spacing: 2px; }
+h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+main { padding: 0 16px 16px; max-width: 900px; }
+button { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 14px; cursor: pointer; font: inherit; }
+button:hover { border-color: var(--muted); }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.hidden { display: none; }
+.warn { color: var(--warn); }
+.good { color: var(--good); }
+.bad { color: var(--bad); }
+.module { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+.module-name { font-weight: 700; }
+.screen { display: grid; grid-template-columns: 140px 1fr; gap: 2px 12px; margin-top: 6px; font-size: 14px; }
+.mono { font-family: ui-monospace, Consolas, monospace; }
