@@ -21,6 +21,10 @@
 const IDLE_CHECK_MS = 500;
 const SPEC_RETRY_MS = 30000;
 const STATUS_MS = 500;
+// Pictures on their way to one module at once. Most of a picture's round trip is cutting, encoding and sending it,
+// so with two on the way they follow each other twice as closely. Never more: a slow module still gets fewer
+// pictures, not a queue of stale ones.
+const MAX_IN_FLIGHT = 2;
 
 let reader = null;
 let modules = [];          // {name, url, spec, error, nextTry, screens: {id: status}}
@@ -71,7 +75,7 @@ async function refreshSpecs() {
             m.spec = await res.json();
             m.error = null;
             for (const sc of m.spec.screens) {
-                m.screens[sc.id] = { showing: false, last: 0, busy: false, summary: '', error: null, sent: 0 };
+                m.screens[sc.id] = { showing: false, last: 0, inFlight: 0, summary: '', error: null, sent: 0 };
             }
         } catch (err) {
             m.error = `not reachable (${err.message}); retrying`;
@@ -120,8 +124,9 @@ function send(frame, m, sc, st, w, h) {
     const [x, y, rw, rh] = scaleRegion(sc.send.region, sc, w, h);
     const crop = new OffscreenCanvas(rw, rh);
     crop.getContext('2d').drawImage(frame, x, y, rw, rh, 0, 0, rw, rh);
-    st.busy = true;
+    st.inFlight++;
     st.last = Date.now();
+    const taken = st.last;
     (async () => {
         const blob = await crop.convertToBlob({ type: 'image/jpeg', quality: sc.send.quality ?? 0.9 });
         const form = new FormData();
@@ -130,13 +135,14 @@ function send(frame, m, sc, st, w, h) {
         form.append('capture_w', w);
         form.append('capture_h', h);
         form.append('x', x); form.append('y', y); form.append('w', rw); form.append('h', rh);
+        form.append('taken', taken);    // so the module can tell a late answer from the latest picture
         const res = await fetch(`${m.url}${sc.post}`, { method: 'POST', body: form });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return (await res.json()).summary ?? '';
     })()
         .then(summary => { st.summary = summary; st.error = null; st.sent++; })
         .catch(err => { st.error = err.message; })
-        .finally(() => { st.busy = false; });
+        .finally(() => { st.inFlight--; });
 }
 
 function onFrame(frame) {
@@ -165,8 +171,7 @@ function onFrame(frame) {
         for (const sc of m.spec.screens) {
             const st = m.screens[sc.id];
             st.showing = showing(frame, sc, w, h);
-            // One upload at a time per screen: a slow module gets fewer frames, never a queue of stale ones.
-            if (st.showing && !st.busy && now - st.last >= sc.every_ms) send(frame, m, sc, st, w, h);
+            if (st.showing && st.inFlight < MAX_IN_FLIGHT && now - st.last >= sc.every_ms) send(frame, m, sc, st, w, h);
         }
     }
 }
