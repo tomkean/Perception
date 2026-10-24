@@ -25,6 +25,7 @@
 // While no module's screen is showing, look only this often: opening a box is noticed within half a second.
 const IDLE_CHECK_MS = 500;
 const SPEC_RETRY_MS = 30000;
+const MODULE_LIST_MS = 30000;
 const STATUS_MS = 500;
 // Pictures on their way to one module at once. Most of a picture's round trip is cutting, encoding and sending it,
 // so with several on the way they follow each other that much more closely. Never more: a slow module still gets fewer
@@ -50,6 +51,7 @@ async function start(readable, list) {
     stop();
     modules = list.map(m => ({ ...m, spec: null, error: null, nextTry: 0, screens: {}, asking: false,
                                pictures: { sent: 0, error: null } }));
+    lastListCheck = Date.now();
     reader = readable.getReader();
     const mine = reader;
     refreshSpecs();
@@ -71,7 +73,26 @@ function stop() {
     reader = null;
 }
 
+/** Pick up modules added to (or removed from) modules.json since the screen was linked: a new module works without
+ *  reloading this page. */
+let lastListCheck = 0;
+async function refreshModuleList() {
+    const now = Date.now();
+    if (now - lastListCheck < MODULE_LIST_MS) return;
+    lastListCheck = now;
+    try {
+        const list = await (await fetch('/api/modules')).json();
+        if (!Array.isArray(list) || !list.length) return;
+        const known = new Map(modules.map(m => [m.url, m]));
+        modules = list.map(m => known.get(m.url) ?? ({ ...m, spec: null, error: null, nextTry: 0, screens: {},
+                                                       asking: false, pictures: { sent: 0, error: null } }));
+    } catch (err) {
+        // The Pi's server unreachable for a moment: keep the modules there are.
+    }
+}
+
 async function refreshSpecs() {
+    refreshModuleList();
     const now = Date.now();
     for (const m of modules) {
         if (m.spec || now < m.nextTry) continue;
