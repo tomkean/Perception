@@ -1,6 +1,6 @@
 # Perception
 
-The shared screen capture for the Rust tools: Crossbreeding, Livestock and Sentinel.
+The shared screen capture for the Rust tools: Crossbreeding, Livestock, Sentinel and Trading.
 
 A page served from the Pi runs in Chrome on the gaming PC. It shares the screen, and for each module it checks a
 few pixels the module names to see whether the screen that module wants is showing -- for Crossbreeding, an open
@@ -49,6 +49,7 @@ picture of the screen now, and hands each request out once. The next frame is po
 | Crossbreeding | this PC :8200 | open box (grid crop) | - |
 | Livestock | this PC :8100 | card strip, always, every 2 s | Capture button |
 | Sentinel | Pi :8000 | death screen (whole) | recon snaps |
+| Trading | this PC :8400 | map vendor panel (whole) | - |
 
 ## Deploying
 
