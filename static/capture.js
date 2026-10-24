@@ -151,7 +151,8 @@
                 const state = st.showing ? '<span class="good">showing</span>' : '<span class="muted">not on screen</span>';
                 const result = st.error ? `<span class="bad">${st.error}</span>` : (st.summary || '');
                 return `<div>${st.label}</div><div>${state} · ${st.sent} sent${result ? ' · ' + result : ''}</div>`;
-            }).join('');
+            }).join('') + (m.pictures ? `<div>Whole pictures</div><div>${m.pictures.sent} sent on request${
+                m.pictures.error ? ` · <span class="bad">${m.pictures.error}</span>` : ''}</div>` : '');
             return `<div class="module">${head}<div class="screen">${rows}</div></div>`;
         }).join('');
     }

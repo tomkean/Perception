@@ -1,3 +1,5 @@
 [
-  {"name": "Crossbreeding", "url": "http://Seven-Of-Nine:8200"}
+  {"name": "Crossbreeding", "url": "http://Seven-Of-Nine:8200"},
+  {"name": "Livestock", "url": "http://Seven-Of-Nine:8100"},
+  {"name": "Sentinel", "url": "http://raspberrypi:8000"}
 ]

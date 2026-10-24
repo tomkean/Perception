@@ -1,6 +1,6 @@
 # Perception
 
-The shared screen capture for the Rust tools (Crossbreeding first; Livestock and Sentinel to follow).
+The shared screen capture for the Rust tools: Crossbreeding, Livestock and Sentinel.
 
 A page served from the Pi runs in Chrome on the gaming PC. It shares the screen, and for each module it checks a
 few pixels the module names to see whether the screen that module wants is showing -- for Crossbreeding, an open
@@ -32,10 +32,23 @@ it wants:
    "post": "/api/perception/frame", "every_ms": 700}]}
 ```
 
-`pixels` is the detect region shrunk to `size`, greyscale 0-255. The page posts the `send` crop as multipart:
-`file` (JPEG), `screen`, `capture_w`, `capture_h`, and `x`, `y`, `w`, `h` (where the crop came from, in captured
-pixels). The module replies `{"summary": "..."}`, which the page shows. A module has to allow this page's origin
-(`http://raspberrypi:8300`) for cross-origin requests.
+`pixels` is the detect region shrunk to `size`, greyscale 0-255. `detect` may be a list, all of which must match, or
+left out for a screen that is always sent (the module tells its screens apart itself). Without `send` the whole
+screen is sent. The page posts the crop as multipart: `file` (JPEG), `screen`, `capture_w`, `capture_h`, `taken`
+(ms), and `x`, `y`, `w`, `h` (where the crop came from, in captured pixels). The module replies
+`{"summary": "..."}`, which the page shows. A module has to allow this page's origin (`http://raspberrypi:8300`) for
+cross-origin requests.
+
+A spec may also have `"requests": "/some/path"`. The page asks it every half second; the module answers
+`{"pictures": [{"post": "/path", "fields": {...}}]}` when something -- a button on a phone, a hotkey -- wants a whole
+picture of the screen now, and hands each request out once. The next frame is posted whole to each `post` with
+`file`, `capture_w`, `capture_h`, `taken` and the `fields`.
+
+| Module | Address | Screens | Whole pictures |
+|---|---|---|---|
+| Crossbreeding | this PC :8200 | open box (grid crop) | - |
+| Livestock | this PC :8100 | card strip, always, every 2 s | Capture button |
+| Sentinel | Pi :8000 | death screen (whole) | recon snaps |
 
 ## Deploying
 
