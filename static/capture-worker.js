@@ -26,6 +26,7 @@
 const IDLE_CHECK_MS = 500;
 const SPEC_RETRY_MS = 30000;
 const MODULE_LIST_MS = 30000;
+const SPEC_REFRESH_MS = 60000;      // a module's spec is asked for again this often: a new screen works without a reload
 const STATUS_MS = 500;
 // Pictures on their way to one module at once. Most of a picture's round trip is cutting, encoding and sending it,
 // so with several on the way they follow each other that much more closely. Never more: a slow module still gets fewer
@@ -95,18 +96,23 @@ async function refreshSpecs() {
     refreshModuleList();
     const now = Date.now();
     for (const m of modules) {
-        if (m.spec || now < m.nextTry) continue;
-        m.nextTry = now + SPEC_RETRY_MS;
+        if (now < m.nextTry) continue;
+        m.nextTry = now + (m.spec ? SPEC_REFRESH_MS : SPEC_RETRY_MS);
         try {
             const res = await fetch(`${m.url}/api/perception/spec`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            m.spec = await res.json();
-            m.error = null;
-            for (const sc of m.spec.screens) {
-                m.screens[sc.id] = { showing: false, last: 0, inFlight: 0, summary: '', error: null, sent: 0 };
+            const spec = await res.json();
+            const screens = {};
+            for (const sc of spec.screens) {
+                screens[sc.id] = m.screens[sc.id]
+                    ?? { showing: false, last: 0, inFlight: 0, summary: '', error: null, sent: 0 };
             }
+            m.spec = spec;
+            m.screens = screens;
+            m.error = null;
         } catch (err) {
-            m.error = `not reachable (${err.message}); retrying`;
+            // A module with a spec already keeps using it; one without has none to use yet.
+            if (!m.spec) m.error = `not reachable (${err.message}); retrying`;
         }
     }
 }
